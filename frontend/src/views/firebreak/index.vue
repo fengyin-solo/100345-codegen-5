@@ -7,9 +7,20 @@
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记防火隔离带</button>
+        <button class="btn" type="button" @click="triggerImport">导入维护资料</button>
+        <button class="btn" type="button" @click="downloadReport">下载恢复报告</button>
         <button class="btn" type="button" @click="exportRows">导出防火隔离带清单</button>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".csv,text/csv"
+          class="visually-hidden"
+          @change="onFilePicked"
+        />
       </div>
     </header>
+
+    <p v-if="notice" class="import-notice">{{ notice }}</p>
 
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
@@ -63,6 +74,53 @@
       </tbody>
     </table>
 
+    <section class="batch-panel">
+      <h3 class="batch-title">维护资料导入批次</h3>
+      <p class="batch-rule">
+        上传文件需包含隔离带编号、所属林区、带宽米数三列；{{ conflictRule }}；同一文件重复上传只保留一份批次，失败批次保留原因可重试。
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>批次</th>
+            <th>文件名</th>
+            <th>导入日期</th>
+            <th>状态</th>
+            <th>行数</th>
+            <th>失败原因 / 处理说明</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="batch in batches" :key="batch.id">
+            <td>#{{ batch.id }}</td>
+            <td>{{ batch.filename }}</td>
+            <td>{{ batch.importDate }}</td>
+            <td>{{ batch.status }}</td>
+            <td>{{ batch.status === '成功' ? batch.rowCount : '—' }}</td>
+            <td>
+              <span v-if="batch.failReason" class="error-text">{{ batch.failReason }}</span>
+              <span v-for="note in batch.notes" :key="note" class="batch-note">{{ note }}</span>
+              <span v-if="!batch.failReason && !batch.notes.length">—</span>
+            </td>
+            <td class="row-actions">
+              <button
+                v-if="batch.status === '失败'"
+                class="link"
+                type="button"
+                @click="retryBatch(batch.id)"
+              >
+                重试
+              </button>
+            </td>
+          </tr>
+          <tr v-if="!batches.length">
+            <td colspan="7" class="empty-state">还没有导入批次，点击「导入维护资料」上传 CSV 文件</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条防火隔离带记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -79,7 +137,14 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import {
+  conflictRuleNote,
+  downloadRecoveryReport,
+  importMaintenanceFile,
+  listImportBatches,
+  retryImportBatch,
+} from '@/api/firebreak-import'
+import type { EntryRow, FirebreakImportBatch } from '@/data/types'
 
 const meta = moduleMeta('firebreak')
 const columns = ["隔离带编号", "所属林区", "起止坐标", "带宽米数", "建成日期", "最近维护日期", "植被恢复程度", "维护状态"]
@@ -91,6 +156,10 @@ const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
+const batches = ref<FirebreakImportBatch[]>([])
+const notice = ref('')
+const conflictRule = conflictRuleNote()
+const fileInput = ref<HTMLInputElement | null>(null)
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
@@ -110,6 +179,41 @@ function exportRows() {
 
 function openCreate() {
   errorMessage.value = '防火隔离带登记入口尚未接入审批流'
+}
+
+function triggerImport() {
+  fileInput.value?.click()
+}
+
+async function onFilePicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 清空选择，允许同一文件再次上传（走重放 / 重试逻辑，不会重复建档）。
+  input.value = ''
+  if (!file) {
+    return
+  }
+  const content = await file.text()
+  const outcome = importMaintenanceFile(file.name, content)
+  notice.value = outcome.message
+  errorMessage.value = ''
+  reloadBatches()
+  reload()
+}
+
+function retryBatch(id: number) {
+  notice.value = retryImportBatch(id).message
+  errorMessage.value = ''
+  reloadBatches()
+  reload()
+}
+
+function downloadReport() {
+  downloadRecoveryReport()
+}
+
+function reloadBatches() {
+  batches.value = listImportBatches()
 }
 
 function runAction(action: string, row: EntryRow) {
@@ -133,5 +237,8 @@ function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  reload()
+  reloadBatches()
+})
 </script>
