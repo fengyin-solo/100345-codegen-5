@@ -18,6 +18,46 @@
       </article>
     </div>
 
+    <section class="panel">
+      <h3 class="panel-title">
+        道路巡检待办
+        <span class="sub-count">待处理 {{ pendingTodoCount }} / 共 {{ todos.length }} 条</span>
+      </h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>生成时间</th>
+            <th>来源</th>
+            <th>关联文件</th>
+            <th>巡检内容</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="todo in todos" :key="todo.id">
+            <td>{{ todo.createdAt }}</td>
+            <td>{{ todo.source }} #{{ todo.batchId }}</td>
+            <td>{{ todo.fileName }}</td>
+            <td>{{ todo.content }}</td>
+            <td>
+              <span :class="['badge', todo.done ? 'badge-ok' : 'badge-wait']">
+                {{ todo.done ? '已完成' : '待巡检' }}
+              </span>
+            </td>
+            <td class="row-actions">
+              <button class="link" type="button" @click="toggleTodo(todo.id)">
+                {{ todo.done ? '标记待巡检' : '完成巡检' }}
+              </button>
+            </td>
+          </tr>
+          <tr v-if="!todos.length">
+            <td colspan="6" class="empty-state">暂无巡检待办，防火隔离带维护资料导入成功后会自动生成一条</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
@@ -76,10 +116,12 @@ import { computed, onMounted, ref } from 'vue'
 import {
   downloadEntries,
   listEntries,
+  listRoadInspectionTodos,
   moduleMeta,
   runAction as applyAction,
+  toggleRoadInspectionTodo,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import type { EntryRow, RoadInspectionTodo } from '@/data/types'
 
 const meta = moduleMeta('forestroad')
 const columns = ["道路编号", "道路名称", "起点位置", "终点位置", "道路等级", "通行宽度", "最近巡检日", "通行状态"]
@@ -92,6 +134,8 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const todos = ref<RoadInspectionTodo[]>([])
+const pendingTodoCount = computed(() => todos.value.filter((todo) => !todo.done).length)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -112,6 +156,15 @@ function openCreate() {
   errorMessage.value = '林区道路登记入口尚未接入审批流'
 }
 
+function toggleTodo(id: number) {
+  const result = toggleRoadInspectionTodo(id)
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  reloadTodos()
+}
+
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
   const result = applyAction(meta.key, Number(row.id), action)
@@ -120,6 +173,10 @@ function runAction(action: string, row: EntryRow) {
     return
   }
   reload()
+}
+
+function reloadTodos() {
+  todos.value = listRoadInspectionTodos()
 }
 
 function reload() {
@@ -133,5 +190,8 @@ function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  reload()
+  reloadTodos()
+})
 </script>
